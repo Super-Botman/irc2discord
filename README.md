@@ -1,5 +1,4 @@
 # DISCORD to IRC
----
 
 > [!WARNING]  
 > This project is still a POC and many problems could occur !
