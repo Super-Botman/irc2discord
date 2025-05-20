@@ -41,13 +41,13 @@ pub const Commands = enum {
     PRIVMSG,
     UNDEFINED,
     PING,
+    NOTICE,
 };
 
 pub fn parse(allocator: std.mem.Allocator, conn: anytype) !std.ArrayList(Message) {
     var ret = std.ArrayList(Message).init(allocator);
 
     recv: while (try conn.next()) |data| {
-        std.debug.print("data: {s}\n", .{data});
         var lines = std.mem.splitSequence(u8, data, "\r\n");
         while (lines.next()) |line| {
             if (std.mem.eql(u8, line, "")) {
@@ -73,40 +73,43 @@ pub fn parse(allocator: std.mem.Allocator, conn: anytype) !std.ArrayList(Message
                 if (std.mem.eql(u8, header, "")) {
                     continue;
                 }
-                switch (i) {
+
+                const command = std.meta.stringToEnum(Commands, header);
+                const res = toInt(u64, header) catch null;
+
+                const id_type = u19;
+
+                const isNewCommand = @as(id_type, @intFromBool(command != null));
+                const isCommand = @as(id_type, @intFromBool(msg.type == MessageType.command));
+                const isRes = @as(id_type, @intFromBool(res != null));
+
+                const id: id_type = i | isNewCommand << 16 | isCommand << 17 | isRes << 18;
+
+                switch (id) {
                     0 => {
-                        const command = std.meta.stringToEnum(Commands, header);
-                        if (command != null) {
-                            msg.type = MessageType.command;
-                            msg.command = command;
-                        } else {
-                            try msg.server.appendSlice(header);
-                        }
+                        try msg.server.appendSlice(header);
+                    },
+                    0 | 1 << 16 => {
+                        msg.type = MessageType.command;
+                        msg.command = command;
+                    },
+
+                    1 | 1 << 16 => {
+                        msg.type = MessageType.command;
+                        msg.command = command;
+                    },
+                    1 | 1 << 18 => {
+                        msg.type = MessageType.res;
+                        msg.res = res;
                     },
                     1 => {
-                        if (msg.type == MessageType.command) {
-                            try msg.args.append(header);
-                        } else {
-                            const command = std.meta.stringToEnum(Commands, header);
-                            const res = toInt(u64, header) catch null;
-                            if (command != null) {
-                                msg.type = MessageType.command;
-                                msg.command = command;
-                            } else if (res != null) {
-                                msg.type = MessageType.res;
-                                msg.res = res;
-                            } else {
-                                msg.type = MessageType.message;
-                            }
-                        }
+                        msg.type = MessageType.message;
                     },
-                    2 => {
-                        if (msg.type != MessageType.command) {
-                            try msg.source.appendSlice(header);
-                        } else {
-                            try msg.args.append(header);
-                        }
+
+                    2 | 1 << 17 => {
+                        try msg.source.appendSlice(header);
                     },
+
                     else => {
                         try msg.args.append(header);
                     },
@@ -120,17 +123,14 @@ pub fn parse(allocator: std.mem.Allocator, conn: anytype) !std.ArrayList(Message
 
             if (msg.type == MessageType.command) {
                 var iter = std.mem.splitScalar(u8, msg.server.items, '@');
-                std.debug.print("{s}\n", .{msg.server.items});
-                const source = iter.first();
-                std.debug.print("src: {s}\n", .{source});
-                if (source.len > 0) {
-                    const server = iter.next().?;
-                    std.debug.print("srv: {s}\n", .{server});
+                const source = iter.next();
+                const server = iter.next();
+                if (source != null and server != null) {
+                    try msg.source.resize(source.?.len);
+                    msg.source.items = @constCast(source.?);
 
-                    try msg.source.appendSlice(source);
-
-                    msg.server.items = @constCast(server);
-                    msg.server.shrinkAndFree(server.len);
+                    try msg.server.resize(server.?.len);
+                    msg.server.items = @constCast(server.?);
                 }
             }
 

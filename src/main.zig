@@ -23,16 +23,26 @@ fn irc_client() !void {
         defer messages.deinit();
 
         for (messages.items) |msg| {
-            defer msg.deinit();
-
-            std.debug.print("NEW MESSAGE\n", .{});
+            std.debug.print("\n---\nNEW MESSAGE\n", .{});
             std.debug.print("server: {s}\n", .{msg.server.items});
-            std.debug.print("source: {s}\n", .{msg.source.items});
+
+            if (std.mem.eql(u8, msg.source.items, "") != false) {
+                std.debug.print("source: {s}\n", .{msg.source.items});
+            }
+
             if (msg.res != null) {
                 std.debug.print("response code: {?}\n", .{msg.res});
             }
+
+            std.debug.print("args: ", .{});
+            for (msg.args.items) |arg| {
+                std.debug.print("{s}, ", .{arg});
+            }
+            std.debug.print("\n", .{});
+
             if (msg.type == irc.MessageType.command) {
                 std.debug.print("command: {s}\n", .{@tagName(msg.command.?)});
+
                 if (msg.command == irc.Commands.PING) {
                     const writer = connection.writer();
                     try writer.writeAll("PONG\r\n");
@@ -41,7 +51,7 @@ fn irc_client() !void {
                 if (msg.command == irc.Commands.PRIVMSG) {
                     const args = msg.args.items;
                     var message = std.ArrayList(u8).init(allocator);
-                    try std.fmt.format(message.writer(), "**{s}:** {s}", .{ msg.source.items, args[1] });
+                    try std.fmt.format(message.writer(), "**{s}:** {s}", .{ msg.source.items, args[0] });
 
                     const channel = Discord.Snowflake.from(user.discord_channel);
                     var result = try session.api.sendMessage(channel, .{ .content = message.items });
@@ -76,11 +86,7 @@ pub fn main() !void {
     env_map.* = try std.process.getEnvMap(allocator);
     defer env_map.deinit();
 
-    const token = env_map.get("DISCORD_TOKEN") orelse {
-        @panic("DISCORD_TOKEN not found in environment variables");
-    };
-
-    user = try allocator.create(User);
+    user = try User.init(allocator);
     user.* = .{
         .nickname = env_map.get("NICKNAME") orelse {
             @panic("DISCORD_TOKEN not found in environment variables");
@@ -105,6 +111,7 @@ pub fn main() !void {
             @panic("PORT not found in environment variables");
         }),
     };
+    defer user.*.deinit();
 
     // IRC
     const tcp = try std.net.tcpConnectToHost(allocator, user.server, user.port);
@@ -122,6 +129,9 @@ pub fn main() !void {
     defer _ = connection.close() catch null;
 
     // DISCORD
+    const token = env_map.get("DISCORD_TOKEN") orelse {
+        @panic("DISCORD_TOKEN not found in environment variables");
+    };
     session = try allocator.create(Discord.Session);
     session.* = Discord.init(allocator);
     defer session.deinit();
