@@ -8,7 +8,7 @@ pub const User = struct {
     realname: []const u8,
     password: ?[]const u8 = null,
     irc_channel: []const u8,
-    discord_channel: u64,
+    guild_id: u64,
     server: []const u8,
     port: u16,
 

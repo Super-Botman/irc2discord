@@ -40,9 +40,13 @@
             .url = "git+https://github.com/ianic/tls.zig.git#8250aa9184fbad99983b32411bbe1a5d2fd6f4b7",
             .hash = "tls-0.1.0-ER2e0pU3BQB-UD2_s90uvppceH_h4KZxtHCrCct8L054",
         },
+        .cache = .{
+            .url = "git+https://github.com/karlseguin/cache.zig.git#87e811190e158ac1196a4c8aeb0070e5f59b10c4",
+            .hash = "cache-0.0.0-winRwBp9AAB2k01WUUsA8AqkMxD0R5ixoNtS6dQSZJhQ",
+        },
         .discordzig = .{
-            .url = "git+https://git.yuzucchii.xyz/yuzucchii/discord.zig#08728161ddcfffad8f5b85f87416bb881fc81764",
-            .hash = "discordzig-1.0.0-KYtlU41SCAALuF3XON2k8dJdPn6wjc4Ejxa1Dh41z8Pq",
+            .url = "git+https://git.yuzucchii.xyz/yuzucchii/discord.zig.git#88088e4ae862dcce31bc212eac92b74e803c63f8",
+            .hash = "discordzig-1.0.0-KYtlU_JhCADRmIXgmqX5lg8of2_q1C4zFJdhZrZOhZvW",
         },
     },
 

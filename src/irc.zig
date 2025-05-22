@@ -16,23 +16,26 @@ pub const Message = struct {
     args: std.ArrayList([]const u8),
     server: std.ArrayList(u8),
     source: std.ArrayList(u8),
+    user: std.ArrayList(u8),
     data: std.ArrayList(u8),
 
     pub fn init(alloc: std.mem.Allocator) Message {
         return .{
             .type = MessageType.undefined,
-            .source = std.ArrayList(u8).init(alloc),
             .args = std.ArrayList([]const u8).init(alloc),
             .server = std.ArrayList(u8).init(alloc),
+            .source = std.ArrayList(u8).init(alloc),
+            .user = std.ArrayList(u8).init(alloc),
             .data = std.ArrayList(u8).init(alloc),
         };
     }
 
     pub fn deinit(self: *const Message) void {
-        self.source.deinit();
-        self.server.deinit();
-        self.data.deinit();
         self.args.deinit();
+        self.server.deinit();
+        self.source.deinit();
+        self.user.deinit();
+        self.data.deinit();
     }
 };
 
@@ -84,6 +87,7 @@ pub fn parse(allocator: std.mem.Allocator, conn: anytype) !std.ArrayList(Message
                 const isRes = @as(id_type, @intFromBool(res != null));
 
                 const id: id_type = i | isNewCommand << 16 | isCommand << 17 | isRes << 18;
+                // std.debug.print("id: {b}\n", .{id});
 
                 switch (id) {
                     0 => {
@@ -106,7 +110,7 @@ pub fn parse(allocator: std.mem.Allocator, conn: anytype) !std.ArrayList(Message
                         msg.type = MessageType.message;
                     },
 
-                    2 | 1 << 17 => {
+                    2 | 1 << 17, 2 | 1 << 16 => {
                         try msg.source.appendSlice(header);
                     },
 
@@ -116,18 +120,18 @@ pub fn parse(allocator: std.mem.Allocator, conn: anytype) !std.ArrayList(Message
                 }
             }
 
-            i = 0;
-            while (parts.next()) |part| : (i += 1) {
+            while (parts.next()) |part| {
                 try msg.args.append(part);
             }
 
             if (msg.type == MessageType.command) {
-                var iter = std.mem.splitScalar(u8, msg.server.items, '@');
-                const source = iter.next();
-                const server = iter.next();
-                if (source != null and server != null) {
-                    try msg.source.resize(source.?.len);
-                    msg.source.items = @constCast(source.?);
+                var iter_server = std.mem.splitScalar(u8, msg.server.items, '@');
+                const user = iter_server.next();
+                const server = iter_server.next();
+                if (user != null and server != null) {
+                    var iter_user = std.mem.splitScalar(u8, user.?, '!');
+                    try msg.user.resize(iter_user.next().?.len);
+                    msg.user.items = @constCast(iter_user.next().?);
 
                     try msg.server.resize(server.?.len);
                     msg.server.items = @constCast(server.?);

@@ -22,7 +22,7 @@ pub fn build(b: *std.Build) void {
     });
 
     const exe = b.addExecutable(.{
-        .name = "discord_irc",
+        .name = "irc2discord",
         .root_module = exe_mod,
     });
 
@@ -31,6 +31,9 @@ pub fn build(b: *std.Build) void {
 
     const dzig = b.dependency("discordzig", .{});
     exe.root_module.addImport("discord.zig", dzig.module("discord.zig"));
+
+    const cache = b.dependency("cache", .{});
+    exe.root_module.addImport("cache", cache.module("cache"));
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
