@@ -15,15 +15,17 @@ var channelCache: cache.Cache(Discord.Channel) = undefined;
 
 fn getChannel(settings: Discord.CreateGuildChannel) !Discord.Channel {
     const cachedChannel = channelCache.get(settings.name);
-    const isGoodChannel = if (settings.parent_id != null and cachedChannel != null) cachedChannel.?.value.parent_id == settings.parent_id else true;
-
     var channel = if (cachedChannel != null) cachedChannel.?.value else null;
+    const isGoodChannel = if (settings.parent_id != null and channel != null) channel.?.parent_id == settings.parent_id else true;
+    std.debug.print("{s}: isGoodChannel = {any}\n", .{ settings.name, isGoodChannel });
 
     if (channel == null or !isGoodChannel) {
+        std.debug.print("\nnew channel created: {s}\n", .{settings.name});
         const res = try session.api.createGuildChannel(Discord.Snowflake.from(user.guild_id), settings);
         channel = res.value.unwrap();
-        try channelCache.put(settings.name, channel.?, .{});
     }
+
+    try channelCache.put(settings.name, channel.?, .{});
     return channel.?;
 }
 
@@ -31,8 +33,6 @@ fn irc_client(allocator: std.mem.Allocator) !void {
     var categorySettings: Discord.CreateGuildChannel = .{
         .name = "Channels",
         .type = .GuildCategory,
-        .available_tags = null,
-        .default_reaction_emoji = null,
     };
     const channelsCat = try getChannel(categorySettings);
     _ = try getChannel(.{ .name = user.irc_channel[1..], .parent_id = channelsCat.id });
@@ -44,6 +44,7 @@ fn irc_client(allocator: std.mem.Allocator) !void {
 
     const writer = connection.writer();
     try writer.print("WHO {s}\r\n", .{user.irc_channel});
+
     while (true) {
         var messages: std.ArrayList(irc.Message) = try irc.parse(allocator, connection);
         defer messages.deinit();
@@ -101,8 +102,6 @@ fn irc_client(allocator: std.mem.Allocator) !void {
                         .name = name,
                         .parent_id = parent.id,
                         .type = .GuildText,
-                        .default_reaction_emoji = null,
-                        .available_tags = null,
                     });
 
                     var result = try session.api.sendMessage(channel.id, .{ .content = discord_message.items });
