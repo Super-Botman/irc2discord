@@ -11,13 +11,15 @@ const net = std.net;
 var session: *Discord.Session = undefined;
 var connection: *tls.Connection(net.Stream) = undefined;
 var user: *User = undefined;
-var channelCache: cache.Cache(Discord.Channel) = undefined;
+var channelCache: std.StringHashMap(Discord.Channel) = undefined;
 
 fn getChannel(settings: Discord.CreateGuildChannel) !Discord.Channel {
     const cachedChannel = channelCache.get(settings.name);
-    var channel = if (cachedChannel != null) cachedChannel.?.value else null;
+    std.debug.print("cachedChannel: {any}\n", .{cachedChannel});
+    var channel = if (cachedChannel != null) cachedChannel else null;
     const isGoodChannel = if (settings.parent_id != null and channel != null) channel.?.parent_id == settings.parent_id else true;
     std.debug.print("{s}: isGoodChannel = {any}\n", .{ settings.name, isGoodChannel });
+    std.debug.print("channel: {any}\n", .{channel});
 
     if (channel == null or !isGoodChannel) {
         std.debug.print("\nnew channel created: {s}\n", .{settings.name});
@@ -25,7 +27,7 @@ fn getChannel(settings: Discord.CreateGuildChannel) !Discord.Channel {
         channel = res.value.unwrap();
     }
 
-    try channelCache.put(settings.name, channel.?, .{});
+    try channelCache.put(settings.name, channel.?);
     return channel.?;
 }
 
@@ -120,7 +122,7 @@ fn init_client(_: *Shard, payload: Discord.Ready) !void {
     const guild = Discord.Snowflake.from(user.guild_id);
     const channels = try session.api.fetchGuildChannels(guild);
     for (channels.value.right) |channel| {
-        try channelCache.put(channel.name.?, channel, .{});
+        try channelCache.put(channel.name.?, channel);
     }
 
     _ = try std.Thread.spawn(.{}, irc_client, .{session.allocator});
@@ -145,11 +147,11 @@ fn send_msg(_: *Shard, message: Discord.Message) !void {
 }
 
 fn update_channel(_: *Shard, channel: Discord.Channel) !void {
-    try channelCache.put(channel.name.?, channel, .{});
+    try channelCache.put(channel.name.?, channel);
 }
 
 fn delete_channel(_: *Shard, channel: Discord.Channel) !void {
-    _ = channelCache.del(channel.name.?);
+    _ = channelCache.remove(channel.name.?);
 }
 
 pub fn main() !void {
@@ -188,7 +190,7 @@ pub fn main() !void {
     };
     defer user.*.deinit();
 
-    channelCache = try cache.Cache(Discord.Channel).init(allocator, .{});
+    channelCache = std.StringHashMap(Discord.Channel).init(allocator);
     defer channelCache.deinit();
 
     // IRC
