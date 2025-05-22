@@ -15,14 +15,10 @@ var channelCache: std.StringHashMap(Discord.Channel) = undefined;
 
 fn getChannel(settings: Discord.CreateGuildChannel) !Discord.Channel {
     const cachedChannel = channelCache.get(settings.name);
-    std.debug.print("cachedChannel: {any}\n", .{cachedChannel});
     var channel = if (cachedChannel != null) cachedChannel else null;
     const isGoodChannel = if (settings.parent_id != null and channel != null) channel.?.parent_id == settings.parent_id else true;
-    std.debug.print("{s}: isGoodChannel = {any}\n", .{ settings.name, isGoodChannel });
-    std.debug.print("channel: {any}\n", .{channel});
 
     if (channel == null or !isGoodChannel) {
-        std.debug.print("\nnew channel created: {s}\n", .{settings.name});
         const res = try session.api.createGuildChannel(Discord.Snowflake.from(user.guild_id), settings);
         channel = res.value.unwrap();
     }
@@ -90,7 +86,7 @@ fn irc_client(allocator: std.mem.Allocator) !void {
                 if (msg.command == irc.Commands.PRIVMSG) {
                     const args = msg.args.items;
                     var discord_message = std.ArrayList(u8).init(allocator);
-                    try std.fmt.format(discord_message.writer(), "**{s}:** {s}", .{ msg.user.items, args[0] });
+                    try std.fmt.format(discord_message.writer(), "**{s}:** {s}", .{ msg.user.items, try std.mem.join(allocator, ":", args) });
 
                     var message = msg;
                     const replaced = std.mem.replace(u8, message.source.items, "#", "", message.source.items);
