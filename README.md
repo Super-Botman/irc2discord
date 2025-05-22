@@ -1,4 +1,4 @@
-# DISCORD to IRC
+# IRC to Discord
 
 > [!WARNING]  
 > This project is still a POC and many problems could occur !
