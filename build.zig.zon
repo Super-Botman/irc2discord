@@ -45,8 +45,12 @@
             .hash = "cache-0.0.0-winRwBp9AAB2k01WUUsA8AqkMxD0R5ixoNtS6dQSZJhQ",
         },
         .discordzig = .{
-            .url = "git+https://git.yuzucchii.xyz/yuzucchii/discord.zig.git#88088e4ae862dcce31bc212eac92b74e803c63f8",
-            .hash = "discordzig-1.0.0-KYtlU_JhCADRmIXgmqX5lg8of2_q1C4zFJdhZrZOhZvW",
+            .url = "git+https://git.yuzucchii.xyz/yuzucchii/discord.zig.git#8115761b56afdde76293464fd5edd657d3a158f1",
+            .hash = "discordzig-1.0.0-KYtlU8JgCAAJYieLVcnvqIIP9HtLNT5TEfvIrJa7hLmf",
+        },
+        .mailbox = .{
+            .url = "git+https://github.com/g41797/mailbox.git#42bd0b66882dff411f0f9bc1f8df374b3b2d3d28",
+            .hash = "mailbox-0.0.0-eJsHsNk2AAB71_iN5z6lpS9v1UwzZCn9dqhx4wBhHCSD",
         },
     },
 

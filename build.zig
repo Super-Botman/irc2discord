@@ -19,11 +19,13 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
     });
 
     const exe = b.addExecutable(.{
         .name = "irc2discord",
         .root_module = exe_mod,
+        .link_libc = true,
     });
 
     const tls = b.dependency("tls", .{});
@@ -34,6 +36,9 @@ pub fn build(b: *std.Build) void {
 
     const cache = b.dependency("cache", .{});
     exe.root_module.addImport("cache", cache.module("cache"));
+
+    const mailbox = b.dependency("mailbox", .{});
+    exe.root_module.addImport("mailbox", mailbox.module("mailbox"));
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default

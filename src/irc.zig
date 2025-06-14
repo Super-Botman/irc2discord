@@ -1,162 +1,342 @@
 const std = @import("std");
-const User = @import("user.zig").User;
-const toInt = @import("utils.zig").toInt;
+const tls = @import("tls");
+const utils = @import("utils.zig");
 
-pub const MessageType = enum {
-    command,
-    res,
-    message,
-    undefined,
+const Commands = enum {
+    PING,
+    PRIVMSG,
+    JOIN,
 };
 
-pub const Message = struct {
-    type: MessageType,
-    res: ?u64 = null,
-    command: ?Commands = null,
-    args: std.ArrayList([]const u8),
-    server: std.ArrayList(u8),
-    source: std.ArrayList(u8),
-    user: std.ArrayList(u8),
-    data: std.ArrayList(u8),
+const Replies = enum(u16) {
+    WHO = 352,
+    NAME = 353,
+};
 
-    pub fn init(alloc: std.mem.Allocator) Message {
+pub const ChannelType = enum {
+    CHANNEL,
+    USER,
+};
+
+const MessageFields = struct {
+    const Self = @This();
+
+    command: std.ArrayList(u8),
+    params: std.ArrayList(std.ArrayList(u8)),
+    channel: std.ArrayList(u8),
+    channel_type: ChannelType,
+
+    pub fn init(allocator: std.mem.Allocator) Self {
         return .{
-            .type = MessageType.undefined,
-            .args = std.ArrayList([]const u8).init(alloc),
-            .server = std.ArrayList(u8).init(alloc),
-            .source = std.ArrayList(u8).init(alloc),
-            .user = std.ArrayList(u8).init(alloc),
-            .data = std.ArrayList(u8).init(alloc),
+            .command = .init(allocator),
+            .params = .init(allocator),
+            .channel = .init(allocator),
+            .channel_type = undefined,
         };
     }
 
-    pub fn deinit(self: *const Message) void {
-        self.args.deinit();
-        self.server.deinit();
-        self.source.deinit();
-        self.user.deinit();
-        self.data.deinit();
+    pub fn deinit(self: *const Self) void {
+        self.command.deinit();
+        for (self.params.items) |*param| {
+            param.deinit();
+        }
+        self.params.deinit();
     }
 };
 
-pub const Commands = enum {
-    JOIN,
-    PRIVMSG,
-    UNDEFINED,
-    PING,
-    NOTICE,
+const MessagePrefix = struct {
+    const Self = @This();
+
+    username: std.ArrayList(u8),
+    nickname: std.ArrayList(u8),
+    source: std.ArrayList(u8),
+
+    pub fn init(allocator: std.mem.Allocator) Self {
+        return .{
+            .username = .init(allocator),
+            .nickname = .init(allocator),
+            .source = .init(allocator),
+        };
+    }
+
+    pub fn deinit(self: *const Self) void {
+        self.username.deinit();
+        self.nickname.deinit();
+        self.source.deinit();
+    }
 };
 
-pub fn parse(allocator: std.mem.Allocator, conn: anytype) !std.ArrayList(Message) {
+pub const Message = struct {
+    const Self = @This();
+
+    prefix: MessagePrefix,
+    content: MessageFields,
+
+    pub fn init(allocator: std.mem.Allocator) Self {
+        return .{
+            .prefix = .init(allocator),
+            .content = .init(allocator),
+        };
+    }
+
+    pub fn deinit(self: *const Self) void {
+        self.prefix.deinit();
+        self.content.deinit();
+    }
+};
+
+const User = struct {
+    nickname: []const u8,
+    username: ?[]const u8 = null,
+    realname: ?[]const u8 = null,
+    password: ?[]const u8 = null,
+    channels: []const u8,
+};
+
+const Actions = struct {
+    on_message: ?*const fn (msg: Message) anyerror!void = null,
+    on_join: ?*const fn (msg: Message) anyerror!void = null,
+    on_name: ?*const fn (msg: Message) anyerror!void = null,
+    on_who: ?*const fn (msg: Message) anyerror!void = null,
+};
+
+const Settings = struct {
+    server: []const u8,
+    port: u16,
+    user: User,
+    actions: Actions,
+};
+
+//  :b0tm4n!0xB0tm4n@127.0.0.1
+//  nickname = b0tm4n
+//  username = 0xB0tm4n
+//  source = 127.0.0.1
+
+fn parsePrefix(msg_prefix: *MessagePrefix, buf: []const u8) !void {
+    if (std.mem.containsAtLeastScalar(u8, buf, 1, '!') and std.mem.containsAtLeastScalar(u8, buf, 1, '@')) {
+        var name_parts = std.mem.splitScalar(u8, buf[1..buf.len], '!');
+
+        if (name_parts.next()) |nickname_buf| {
+            try msg_prefix.nickname.appendSlice(nickname_buf);
+        }
+
+        if (name_parts.next()) |source_buf| {
+            var source_parts = std.mem.splitScalar(u8, source_buf, '@');
+
+            const username = source_parts.next() orelse return;
+            try msg_prefix.username.appendSlice(username);
+
+            const source = source_parts.next() orelse return;
+            try msg_prefix.source.appendSlice(source);
+        }
+    } else {
+        try msg_prefix.source.appendSlice(buf[1..buf.len]);
+    }
+}
+
+fn parse(allocator: std.mem.Allocator, buffer: []const u8) !std.ArrayList(Message) {
     var ret = std.ArrayList(Message).init(allocator);
 
-    recv: while (try conn.next()) |data| {
-        var lines = std.mem.splitSequence(u8, data, "\r\n");
-        while (lines.next()) |line| {
-            if (std.mem.eql(u8, line, "")) {
-                break :recv;
-            }
-
-            var msg: Message = Message.init(allocator);
-
-            var parts = std.mem.splitScalar(u8, line, ':');
-            const check = parts.next();
-
-            var headers_buf: ?[]const u8 = undefined;
-            if (check.?.len == 0) {
-                headers_buf = parts.next().?;
-            } else {
-                headers_buf = check;
-            }
-
-            var headers = std.mem.splitScalar(u8, headers_buf.?, ' ');
-
-            var i: u16 = 0;
-            while (headers.next()) |header| : (i += 1) {
-                if (std.mem.eql(u8, header, "")) {
-                    continue;
-                }
-
-                const command = std.meta.stringToEnum(Commands, header);
-                const res = toInt(u64, header) catch null;
-
-                const id_type = u19;
-
-                const isNewCommand = @as(id_type, @intFromBool(command != null));
-                const isCommand = @as(id_type, @intFromBool(msg.type == MessageType.command));
-                const isRes = @as(id_type, @intFromBool(res != null));
-
-                const id: id_type = i | isNewCommand << 16 | isCommand << 17 | isRes << 18;
-                // std.debug.print("id: {b}\n", .{id});
-
-                switch (id) {
-                    0 => {
-                        try msg.server.appendSlice(header);
-                    },
-                    0 | 1 << 16 => {
-                        msg.type = MessageType.command;
-                        msg.command = command;
-                    },
-
-                    1 | 1 << 16 => {
-                        msg.type = MessageType.command;
-                        msg.command = command;
-                    },
-                    1 | 1 << 18 => {
-                        msg.type = MessageType.res;
-                        msg.res = res;
-                    },
-                    1 => {
-                        msg.type = MessageType.message;
-                    },
-
-                    2 | 1 << 17, 2 | 1 << 16 => {
-                        try msg.source.appendSlice(header);
-                    },
-
-                    else => {
-                        try msg.args.append(header);
-                    },
-                }
-            }
-
-            while (parts.next()) |part| {
-                try msg.args.append(part);
-            }
-
-            if (msg.type == MessageType.command) {
-                var iter_server = std.mem.splitScalar(u8, msg.server.items, '@');
-                const user = iter_server.next();
-                const server = iter_server.next();
-                if (user != null and server != null) {
-                    var iter_user = std.mem.splitScalar(u8, user.?, '!');
-                    try msg.user.resize(iter_user.next().?.len);
-                    msg.user.items = @constCast(iter_user.next().?);
-
-                    try msg.server.resize(server.?.len);
-                    msg.server.items = @constCast(server.?);
-                }
-            }
-
-            try ret.append(msg);
+    var lines = std.mem.splitSequence(u8, buffer, "\r\n");
+    while (lines.next()) |line| {
+        if (std.mem.eql(u8, line, "")) {
+            continue;
         }
-        break;
+
+        var msg: Message = Message.init(allocator);
+
+        var message_parts = std.mem.splitScalar(u8, line, ' ');
+        var i: usize = 0;
+        var paramIndex: usize = 0;
+        var isCommand = false;
+        while (message_parts.next()) |part| : (i += 1) {
+            switch (i) {
+                0 => {
+                    if (part[0] == ':') {
+                        try parsePrefix(&msg.prefix, part);
+                    } else {
+                        isCommand = true;
+                        try msg.content.command.appendSlice(part);
+                    }
+                },
+                1 => {
+                    if (!isCommand) {
+                        try msg.content.command.appendSlice(part);
+                    } else {
+                        var param = std.ArrayList(u8).init(allocator);
+                        try param.appendSlice(part);
+                        try msg.content.params.append(param);
+                    }
+                },
+                else => {
+                    if (part[0] == ':') {
+                        var param = std.ArrayList(u8).init(allocator);
+                        try param.appendSlice(part[1..part.len]);
+                        try msg.content.params.append(param);
+
+                        paramIndex = msg.content.params.items.len - 1;
+                    } else if (paramIndex > 0) {
+                        try msg.content.params.items[paramIndex].appendSlice(" ");
+                        try msg.content.params.items[paramIndex].appendSlice(part);
+                    } else {
+                        var param = std.ArrayList(u8).init(allocator);
+                        try param.appendSlice(part);
+                        try msg.content.params.append(param);
+                    }
+                },
+            }
+        }
+
+        try ret.append(msg);
     }
 
     return ret;
 }
 
-pub fn login(user: User, conn: anytype) !void {
-    var buf: [std.posix.HOST_NAME_MAX:0]u8 = undefined;
-    const hostname = try std.posix.gethostname(&buf);
-    const writer = conn.writer();
-
-    std.debug.print("hostname: {s}\n", .{hostname});
-
-    if (user.password != null) {
-        try writer.print("PASS {s}\n", .{user.password.?});
+fn callAction(action: ?*const fn (msg: Message) anyerror!void, message: Message) !void {
+    if (action) |function| {
+        try function(message);
     }
-    try writer.print("NICK {s}\n", .{user.nickname});
-    try writer.print("USER {s} {s} {s} {s}\n", .{ user.nickname, hostname, user.server, user.realname });
-    try writer.print("JOIN {s}\n", .{user.irc_channel});
+    return;
+}
+
+fn parseChannel(message: *Message, channel_buf: []const u8) !void {
+    if (channel_buf[0] == '#') {
+        try message.content.channel.appendSlice(channel_buf[1..channel_buf.len]);
+        message.content.channel_type = ChannelType.CHANNEL;
+    } else {
+        try message.content.channel.appendSlice(channel_buf);
+        message.content.channel_type = ChannelType.USER;
+    }
+}
+
+pub const Session = struct {
+    const Self = @This();
+
+    allocator: std.mem.Allocator,
+    connection: tls.Connection(std.net.Stream),
+    settings: Settings,
+    message: Message,
+
+    fn handleCommand(self: *Self, command: Commands) !void {
+        std.debug.print("info(irc): new command {s}\n", .{std.enums.tagName(Commands, command).?});
+        const writer = self.connection.writer();
+        switch (command) {
+            Commands.PING => {
+                try writer.print("PONG {d}", .{std.time.timestamp()});
+            },
+            Commands.PRIVMSG => {
+                try parseChannel(&self.message, self.message.content.params.items[0].items);
+                try callAction(self.settings.actions.on_message, self.message);
+            },
+            Commands.JOIN => {
+                try parseChannel(&self.message, self.message.content.params.items[0].items);
+                try callAction(self.settings.actions.on_join, self.message);
+            },
+        }
+    }
+    fn handleReply(self: *Self, reply: Replies) !void {
+        std.debug.print("info(irc): new reply {s}\n", .{std.enums.tagName(Replies, reply).?});
+        switch (reply) {
+            Replies.NAME => {
+                self.message.content.channel_type = ChannelType.USER;
+                const params = self.message.content.params.items;
+                for (0..params.len - 1) |_| {
+                    if (params[0].items[0] != ':') {
+                        try self.message.content.channel.appendSlice(params[0].items);
+                        _ = self.message.content.params.orderedRemove(0);
+                    }
+                }
+                try callAction(self.settings.actions.on_name, self.message);
+                return;
+            },
+            Replies.WHO => {
+                try callAction(self.settings.actions.on_who, self.message);
+                return;
+            },
+        }
+    }
+
+    fn handleMessage(self: *Self) !void {
+        const replyCode = utils.toInt(u16, self.message.content.command.items) catch 0;
+        if (std.enums.fromInt(Replies, replyCode)) |reply| {
+            try self.handleReply(reply);
+        } else if (std.meta.stringToEnum(Commands, self.message.content.command.items)) |command| {
+            try self.handleCommand(command);
+        } else {
+            return;
+        }
+    }
+
+    fn login(self: *Self) !void {
+        const writer = self.connection.writer();
+        const user = self.settings.user;
+
+        if (user.password != null) {
+            try writer.print("PASS {s}\r\n", .{user.password.?});
+        }
+        try writer.print("NICK {s}\r\n", .{user.nickname});
+        try writer.print("USER {s} 0 * {s}\r\n", .{ user.username orelse user.nickname, user.realname orelse user.nickname });
+
+        var channels = std.mem.splitScalar(u8, user.channels, ' ');
+        while (channels.next()) |channel| {
+            try writer.print("JOIN {s}\r\n", .{channel});
+        }
+    }
+
+    pub fn sendMessage(self: *Self, comptime fmt: []const u8, args: anytype) !void {
+        const writer = self.connection.writer();
+        try writer.print(fmt, args);
+    }
+
+    pub fn init(allocator: std.mem.Allocator) Self {
+        return .{
+            .allocator = allocator,
+            .connection = undefined,
+            .settings = undefined,
+            .message = undefined,
+        };
+    }
+
+    pub fn start(self: *Self, settings: Settings) !void {
+        const tcp = std.net.tcpConnectToHost(self.allocator, settings.server, settings.port) catch {
+            std.debug.print("Error: cannot connect to {s}:{d}\n", .{ settings.server, settings.port });
+            return;
+        };
+        defer tcp.close();
+
+        var root_ca = try tls.config.cert.fromSystem(self.allocator);
+        defer root_ca.deinit(self.allocator);
+
+        std.debug.print("info(irc): Connected to {s}:{d}\n", .{ settings.server, settings.port });
+
+        var connection = try tls.client(tcp, .{
+            .host = settings.server,
+            .root_ca = root_ca,
+            .insecure_skip_verify = true,
+        });
+        self.connection = connection;
+        self.settings = settings;
+
+        self.login() catch {
+            @panic("Login failed");
+        };
+
+        std.debug.print("info(irc): Logged in as {s}\n", .{settings.user.nickname});
+
+        while (try connection.next()) |buffer| {
+            const messages = try parse(self.allocator, buffer);
+            for (messages.items) |message| {
+                self.message = message;
+                try self.handleMessage();
+                self.message.deinit();
+            }
+        }
+
+        _ = connection.close() catch null;
+    }
+};
+
+pub fn init(allocator: std.mem.Allocator) Session {
+    return Session.init(allocator);
 }

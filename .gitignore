@@ -18,6 +18,7 @@ miniircd
 
 .cache
 .zig-cache
+zig-out
 
 # Diagnostic reports (https://nodejs.org/api/report.html)
 

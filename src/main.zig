@@ -1,237 +1,239 @@
 const std = @import("std");
-const tls = @import("tls");
-const irc = @import("irc.zig");
 const cache = @import("cache");
-const User = @import("user.zig").User;
-const toInt = @import("utils.zig").toInt;
+const utils = @import("utils.zig");
+const Irc = @import("irc.zig");
 const Discord = @import("discord.zig");
-const Shard = Discord.Shard;
 
-const net = std.net;
-var session: *Discord.Session = undefined;
-var connection: *tls.Connection(net.Stream) = undefined;
-var user: *User = undefined;
-var channelCache: std.StringHashMap(Discord.Channel) = undefined;
+var discordSession: *Discord.Session = undefined;
+var ircSession: *Irc.Session = undefined;
+var guild_id: u64 = undefined;
 
-fn getChannel(settings: Discord.CreateGuildChannel) !Discord.Channel {
-    const cachedChannel = channelCache.get(settings.name);
-    var channel = if (cachedChannel != null) cachedChannel else null;
-    const isGoodChannel = if (settings.parent_id != null and channel != null) channel.?.parent_id == settings.parent_id else true;
+var mutex = std.Thread.Mutex{};
+var channelCache: std.StringHashMap(StoredChannel) = undefined;
+var cacheInit = false;
 
-    if (channel == null or !isGoodChannel) {
-        const res = try session.api.createGuildChannel(Discord.Snowflake.from(user.guild_id), settings);
-        channel = res.value.unwrap();
-    }
+const Message = struct {
+    author: []u8,
+    source: []u8,
+    content: []u8,
+};
+const StoredChannel = struct {
+    id: ?Discord.Snowflake = null,
+    parent: ?Discord.Snowflake = null,
+};
 
-    try channelCache.put(settings.name, channel.?);
-    return channel.?;
+fn getenv(envMap: *std.process.EnvMap, name: []const u8, necessary: bool) ?[]const u8 {
+    return envMap.get(name) orelse {
+        if (necessary) {
+            std.debug.print("{s} var not found\n", .{name});
+            @panic("exiting");
+        } else {
+            return null;
+        }
+    };
 }
 
-fn irc_client(allocator: std.mem.Allocator) !void {
-    var categorySettings: Discord.CreateGuildChannel = .{
+fn addChannel(name: []const u8, ids: StoredChannel) !void {
+    mutex.lock();
+    defer mutex.unlock();
+    try channelCache.put(name, ids);
+}
+
+fn getOrCreateChannel(settings: Discord.CreateGuildChannel) !StoredChannel {
+    while (!cacheInit) {}
+    mutex.lock();
+    defer mutex.unlock();
+    var ids = channelCache.get(settings.name) orelse StoredChannel{ .id = null, .parent = null };
+
+    if (ids.id == null) {
+        const res = try discordSession.api.createGuildChannel(Discord.Snowflake.from(guild_id), settings);
+        const channel = res.value.unwrap();
+        ids.id = channel.id;
+        ids.parent = channel.parent_id;
+        try channelCache.put(settings.name, ids);
+    }
+
+    return ids;
+}
+
+fn ircMessage(msg: Irc.Message) !void {
+    const message = try std.fmt.allocPrint(
+        discordSession.allocator,
+        "**{s}**: {s}\n",
+        .{ msg.prefix.nickname.items, msg.content.params.items[1].items },
+    );
+
+    var channel: StoredChannel = undefined;
+    if (msg.content.channel_type == Irc.ChannelType.CHANNEL) {
+        channel = try getOrCreateChannel(.{ .name = msg.content.channel.items });
+    } else {
+        const sanitized_user = try utils.removeSpecialChar(ircSession.allocator, msg.prefix.nickname.items);
+        var buf: [10]u8 = undefined;
+        channel = try getOrCreateChannel(.{ .name = std.ascii.lowerString(&buf, sanitized_user) });
+    }
+
+    _ = try discordSession.api.sendMessage(channel.id.?, .{ .content = message });
+}
+
+fn initChannels(msg: Irc.Message) !void {
+    const parent = try getOrCreateChannel(.{
         .name = "Channels",
-        .type = .GuildCategory,
+        .type = Discord.ChannelTypes.GuildCategory,
+    });
+
+    const channel = msg.content.channel.items;
+    const sanitized_channel = try utils.removeSpecialChar(ircSession.allocator, channel);
+    _ = try getOrCreateChannel(.{
+        .name = try std.ascii.allocLowerString(ircSession.allocator, sanitized_channel),
+        .parent_id = parent.id,
+    });
+}
+
+fn initDM(msg: Irc.Message) !void {
+    const parent = try getOrCreateChannel(.{
+        .name = "Users",
+        .type = Discord.ChannelTypes.GuildCategory,
+    });
+
+    var users = std.mem.splitScalar(u8, msg.content.params.items[0].items, ' ');
+    while (users.next()) |user| {
+        const sanitized_user = try utils.removeSpecialChar(ircSession.allocator, user);
+        _ = try getOrCreateChannel(.{
+            .name = try std.ascii.allocLowerString(ircSession.allocator, sanitized_user),
+            .parent_id = parent.id,
+        });
+    }
+}
+
+fn initIrc(allocator: std.mem.Allocator, envMap: *std.process.EnvMap) !void {
+    const server = getenv(envMap, "SERVER", true).?;
+    const port = utils.toInt(u16, getenv(envMap, "PORT", true).?) catch |err| {
+        std.debug.print("Invalid port: {}\n", .{err});
+        @panic("PORT environment variable must be a valid u16");
     };
-    const channelsCat = try getChannel(categorySettings);
-    _ = try getChannel(.{ .name = user.irc_channel[1..], .parent_id = channelsCat.id });
 
-    categorySettings.name = "Users";
-    const queriesCat = try getChannel(categorySettings);
+    ircSession = try allocator.create(Irc.Session);
+    ircSession.* = Irc.init(allocator);
+    defer allocator.destroy(ircSession);
 
-    try irc.login(user.*, connection);
+    const nickname = getenv(envMap, "NICKNAME", true).?;
+    const username = getenv(envMap, "USERNAME", false);
+    const realname = getenv(envMap, "REALNAME", false);
+    const password = getenv(envMap, "PASSWORD", false);
+    const channels = getenv(envMap, "CHANNELS", true).?;
 
-    const writer = connection.writer();
-    try writer.print("WHO {s}\r\n", .{user.irc_channel});
+    try ircSession.start(.{
+        .server = server,
+        .port = port,
+        .user = .{
+            .nickname = nickname,
+            .username = username,
+            .realname = realname,
+            .password = password,
+            .channels = channels,
+        },
+        .actions = .{
+            .on_message = ircMessage,
+            .on_join = initChannels,
+            .on_name = initDM,
+        },
+    });
+}
 
-    while (true) {
-        var messages: std.ArrayList(irc.Message) = try irc.parse(allocator, connection);
-        defer messages.deinit();
+fn initChannelsCache(_: *Discord.Shard, _: Discord.Ready) !void {
+    const guild = Discord.Snowflake.from(guild_id);
+    const channels = try discordSession.api.fetchGuildChannels(guild);
+    for (channels.value.right) |channel| {
+        try addChannel(channel.name.?, .{ .id = channel.id, .parent = channel.parent_id });
+    }
+    cacheInit = true;
+}
 
-        for (messages.items) |msg| {
-            std.debug.print("\n---\nNEW MESSAGE\n", .{});
-            std.debug.print("server: {s}\n", .{msg.server.items});
+fn deleteChannel(_: *Discord.Shard, channel: Discord.Channel) !void {
+    mutex.lock();
+    defer mutex.unlock();
 
-            if (!std.mem.eql(u8, msg.source.items, "")) {
-                std.debug.print("source: {s}\n", .{msg.source.items});
-            }
+    _ = channelCache.remove(channel.name.?);
+}
 
-            if (!std.mem.eql(u8, msg.user.items, "")) {
-                std.debug.print("user: {s}\n", .{msg.user.items});
-            }
+fn discordMessage(_: *Discord.Shard, message: Discord.Message) !void {
+    if (message.content != null and message.author.bot == null) {
+        var fetched = discordSession.api.fetchChannel(message.channel_id) catch {
+            std.debug.print("channel fetching failed\n", .{});
+            return;
+        };
+        const channel = fetched.value.unwrap();
+        fetched = discordSession.api.fetchChannel(channel.parent_id.?) catch {
+            std.debug.print("category fetching failed\n", .{});
+            return;
+        };
+        const category = fetched.value.unwrap();
 
-            if (msg.res != null) {
-                std.debug.print("response code: {?}\n", .{msg.res});
-                if (msg.res == 352) {
-                    var username: []u8 = @constCast(msg.args.items[5]);
-                    for (username, 0..) |chr, i| {
-                        username[i] = std.ascii.toLower(chr);
-                    }
-                    _ = try getChannel(.{ .name = username, .parent_id = queriesCat.id });
-                }
-            }
-
-            std.debug.print("args: ", .{});
-            for (msg.args.items) |arg| {
-                std.debug.print("{s}, ", .{arg});
-            }
-            std.debug.print("\n", .{});
-
-            if (msg.type == irc.MessageType.command) {
-                std.debug.print("command: {s}\n", .{@tagName(msg.command.?)});
-
-                if (msg.command == irc.Commands.PING) {
-                    try writer.print("PONG :{d}\r\n", .{std.time.timestamp()});
-                }
-
-                if (msg.command == irc.Commands.PRIVMSG) {
-                    const args = msg.args.items;
-                    var discord_message = std.ArrayList(u8).init(allocator);
-                    try std.fmt.format(discord_message.writer(), "**{s}:** {s}", .{ msg.user.items, try std.mem.join(allocator, ":", args) });
-
-                    var message = msg;
-                    const replaced = std.mem.replace(u8, message.source.items, "#", "", message.source.items);
-
-                    message.source.shrinkAndFree(msg.source.items.len - replaced);
-
-                    categorySettings.name = if (replaced != 0) "Channels" else "Users";
-                    const parent = try getChannel(categorySettings);
-                    const name = if (replaced != 0) message.source.items else message.user.items;
-                    const channel = try getChannel(.{
-                        .name = name,
-                        .parent_id = parent.id,
-                        .type = .GuildText,
-                    });
-
-                    var result = try session.api.sendMessage(channel.id, .{ .content = discord_message.items });
-
-                    result.deinit();
-                    discord_message.deinit();
-                }
-            }
+        if (std.mem.eql(u8, category.name.?, "Channels")) {
+            try ircSession.sendMessage("PRIVMSG #{s} :{s}\r\n", .{ channel.name.?, message.content.? });
+        } else {
+            try ircSession.sendMessage("PRIVMSG {s} :{s}\r\n", .{ channel.name.?, message.content.? });
         }
     }
 }
 
-fn init_client(_: *Shard, payload: Discord.Ready) !void {
-    std.debug.print("logged in as {s}\n", .{payload.user.username});
+fn initDiscord(allocator: std.mem.Allocator, envMap: *std.process.EnvMap) !void {
+    guild_id = utils.toInt(u64, getenv(envMap, "GUILD_ID", true).?) catch |err| {
+        std.debug.print("Invalid guild id: {}\n", .{err});
+        @panic("GUILD_ID environment variable must be a valid u64");
+    };
 
-    const guild = Discord.Snowflake.from(user.guild_id);
-    const channels = try session.api.fetchGuildChannels(guild);
-    for (channels.value.right) |channel| {
-        try channelCache.put(channel.name.?, channel);
+    const token = getenv(envMap, "DISCORD_TOKEN", true).?;
+
+    discordSession = try allocator.create(Discord.Session);
+    discordSession.* = Discord.init(allocator);
+    defer {
+        allocator.destroy(discordSession);
+        discordSession.deinit();
     }
 
-    _ = try std.Thread.spawn(.{}, irc_client, .{session.allocator});
-}
-
-fn send_msg(_: *Shard, message: Discord.Message) !void {
-    if (message.content != null and message.author.bot == null) {
-        const writer = connection.writer();
-
-        var fetched = try session.api.fetchChannel(message.channel_id);
-        const channel = fetched.value.unwrap();
-        fetched = try session.api.fetchChannel(channel.parent_id.?);
-        const parent = fetched.value.unwrap();
-
-        var dest = std.ArrayList(u8).init(session.allocator);
-        defer dest.deinit();
-        try dest.appendSlice(if (std.mem.eql(u8, parent.name.?, "Channels")) "#" else "");
-        try dest.appendSlice(channel.name.?);
-
-        try writer.print("PRIVMSG {s} :{s}\r\n", .{ dest.items, message.content.? });
-    }
-}
-
-fn update_channel(_: *Shard, channel: Discord.Channel) !void {
-    try channelCache.put(channel.name.?, channel);
-}
-
-fn delete_channel(_: *Shard, channel: Discord.Channel) !void {
-    _ = channelCache.remove(channel.name.?);
-}
-
-pub fn main() !void {
-    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
-    const allocator = gpa.allocator();
-    defer _ = gpa.deinit();
-
-    const env_map = try allocator.create(std.process.EnvMap);
-    env_map.* = try std.process.getEnvMap(allocator);
-    defer env_map.deinit();
-
-    user = try User.init(allocator);
-    user.* = .{
-        .nickname = env_map.get("NICKNAME") orelse {
-            @panic("DISCORD_TOKEN not found in environment variables");
-        },
-        .username = env_map.get("USERNAME") orelse {
-            @panic("USERNAME not found in environment variables");
-        },
-        .realname = env_map.get("REALNAME") orelse {
-            @panic("REALNAME not found in environment variables");
-        },
-        .password = env_map.get("PASSWORD"),
-        .irc_channel = env_map.get("IRC_CHANNEL") orelse {
-            @panic("IRC_CHANNEL  found in environment variables");
-        },
-        .guild_id = try toInt(u64, env_map.get("GUILD_ID") orelse {
-            @panic("GUILD_ID  found in environment variables");
-        }),
-        .server = env_map.get("SERVER") orelse {
-            @panic("SERVER not found in environment variables");
-        },
-        .port = try toInt(u16, env_map.get("PORT") orelse {
-            @panic("PORT not found in environment variables");
-        }),
-    };
-    defer user.*.deinit();
-
-    channelCache = std.StringHashMap(Discord.Channel).init(allocator);
-    defer channelCache.deinit();
-
-    // IRC
-    const tcp = try std.net.tcpConnectToHost(allocator, user.server, user.port);
-    defer tcp.close();
-
-    var root_ca = try tls.config.cert.fromSystem(allocator);
-    defer root_ca.deinit(allocator);
-
-    connection = try allocator.create(tls.Connection(net.Stream));
-    connection.* = try tls.client(tcp, .{
-        .host = user.server,
-        .root_ca = root_ca,
-        .insecure_skip_verify = true,
-    });
-    defer _ = connection.close() catch null;
-
-    // DISCORD
-    const token = env_map.get("DISCORD_TOKEN") orelse {
-        @panic("DISCORD_TOKEN not found in environment variables");
-    };
-    session = try allocator.create(Discord.Session);
-    session.* = Discord.init(allocator);
-    defer session.deinit();
-
-    const intents = comptime blk: {
-        var bits: Discord.Intents = .{};
-        bits.Guilds = true;
-        bits.GuildMessages = true;
-        bits.GuildMembers = true;
-        bits.MessageContent = true;
-        break :blk bits;
+    const intents = Discord.Intents{
+        .Guilds = true,
+        .GuildMessages = true,
+        .GuildMembers = true,
+        .MessageContent = true,
     };
 
-    try session.start(.{
+    try discordSession.start(.{
         .intents = intents,
         .authorization = token,
         .run = .{
-            .message_create = &send_msg,
-            .ready = &init_client,
-            .channel_delete = &delete_channel,
-            .channel_update = &update_channel,
+            .ready = &initChannelsCache,
+            .message_create = &discordMessage,
+            .channel_delete = &deleteChannel,
         },
         .log = .yes,
         .options = .{},
         .cache = .defaults(allocator),
     });
+}
+
+pub fn main() !void {
+    var single_threaded_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer single_threaded_arena.deinit();
+
+    var thread_safe_arena: std.heap.ThreadSafeAllocator = .{
+        .child_allocator = single_threaded_arena.allocator(),
+    };
+    const allocator = thread_safe_arena.allocator();
+
+    const envMap = try allocator.create(std.process.EnvMap);
+    envMap.* = try std.process.getEnvMap(allocator);
+    defer allocator.destroy(envMap);
+    defer envMap.deinit();
+
+    mutex.lock();
+    channelCache = std.StringHashMap(StoredChannel).init(allocator);
+    defer channelCache.deinit();
+    mutex.unlock();
+
+    const DiscordThread = try std.Thread.spawn(.{}, initDiscord, .{ allocator, envMap });
+    const IrcThread = try std.Thread.spawn(.{}, initIrc, .{ allocator, envMap });
+    IrcThread.join();
+    DiscordThread.join();
 }
