@@ -16,3 +16,13 @@ pub fn toInt(T: type, string: []const u8) !T {
     }
     return ret;
 }
+
+pub fn removeSpecialChar(allocator: std.mem.Allocator, string: []const u8) ![]u8 {
+    var ret = std.ArrayList(u8).init(allocator);
+    for (string) |char| {
+        if (std.ascii.isAlphanumeric(char)) {
+            try ret.append(char);
+        }
+    }
+    return ret.items;
+}

@@ -10,7 +10,6 @@ var guild_id: u64 = undefined;
 
 var mutex = std.Thread.Mutex{};
 var channelCache: std.StringHashMap(StoredChannel) = undefined;
-var channelCategory: Discord.Snowflake = undefined;
 var cacheInit = false;
 
 const Message = struct {
@@ -64,7 +63,14 @@ fn ircMessage(msg: Irc.Message) !void {
         .{ msg.prefix.nickname.items, msg.content.params.items[1].items },
     );
 
-    const channel = try getOrCreateChannel(.{ .name = msg.content.channel.items });
+    var channel: StoredChannel = undefined;
+    if (msg.content.channel_type == Irc.ChannelType.CHANNEL) {
+        channel = try getOrCreateChannel(.{ .name = msg.content.channel.items });
+    } else {
+        const sanitized_user = try utils.removeSpecialChar(ircSession.allocator, msg.prefix.nickname.items);
+        var buf: [10]u8 = undefined;
+        channel = try getOrCreateChannel(.{ .name = std.ascii.lowerString(&buf, sanitized_user) });
+    }
 
     _ = try discordSession.api.sendMessage(channel.id.?, .{ .content = message });
 }
@@ -74,12 +80,11 @@ fn initChannels(msg: Irc.Message) !void {
         .name = "Channels",
         .type = Discord.ChannelTypes.GuildCategory,
     });
-    channelCategory = parent.id.?;
 
     const channel = msg.content.channel.items;
-
+    const sanitized_channel = try utils.removeSpecialChar(ircSession.allocator, channel);
     _ = try getOrCreateChannel(.{
-        .name = try ircSession.allocator.dupe(u8, channel),
+        .name = try std.ascii.allocLowerString(ircSession.allocator, sanitized_channel),
         .parent_id = parent.id,
     });
 }
@@ -92,8 +97,9 @@ fn initDM(msg: Irc.Message) !void {
 
     var users = std.mem.splitScalar(u8, msg.content.params.items[0].items, ' ');
     while (users.next()) |user| {
+        const sanitized_user = try utils.removeSpecialChar(ircSession.allocator, user);
         _ = try getOrCreateChannel(.{
-            .name = try ircSession.allocator.dupe(u8, user),
+            .name = try std.ascii.allocLowerString(ircSession.allocator, sanitized_user),
             .parent_id = parent.id,
         });
     }
@@ -152,10 +158,18 @@ fn deleteChannel(_: *Discord.Shard, channel: Discord.Channel) !void {
 
 fn discordMessage(_: *Discord.Shard, message: Discord.Message) !void {
     if (message.content != null and message.author.bot == null) {
-        var fetched = try discordSession.api.fetchChannel(message.channel_id);
+        var fetched = discordSession.api.fetchChannel(message.channel_id) catch {
+            std.debug.print("channel fetching failed\n", .{});
+            return;
+        };
         const channel = fetched.value.unwrap();
+        fetched = discordSession.api.fetchChannel(channel.parent_id.?) catch {
+            std.debug.print("category fetching failed\n", .{});
+            return;
+        };
+        const category = fetched.value.unwrap();
 
-        if (channel.parent_id == channelCategory) {
+        if (std.mem.eql(u8, category.name.?, "Channels")) {
             try ircSession.sendMessage("PRIVMSG #{s} :{s}\r\n", .{ channel.name.?, message.content.? });
         } else {
             try ircSession.sendMessage("PRIVMSG {s} :{s}\r\n", .{ channel.name.?, message.content.? });

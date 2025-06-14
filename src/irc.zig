@@ -13,7 +13,7 @@ const Replies = enum(u16) {
     NAME = 353,
 };
 
-const ChannelType = enum {
+pub const ChannelType = enum {
     CHANNEL,
     USER,
 };
