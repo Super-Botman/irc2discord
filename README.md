@@ -21,3 +21,6 @@ PORT=6697
 DISCORD_TOKEN=<discord_token>
 ```
 
+TO KNOW:
+- username
+- channel
