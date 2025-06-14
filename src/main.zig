@@ -26,7 +26,7 @@ const StoredChannel = struct {
 fn getenv(envMap: *std.process.EnvMap, name: []const u8, necessary: bool) ?[]const u8 {
     return envMap.get(name) orelse {
         if (necessary) {
-            std.debug.print("{s} var not found", .{name});
+            std.debug.print("{s} var not found\n", .{name});
             @panic("exiting");
         } else {
             return null;
@@ -38,23 +38,22 @@ fn addChannel(name: []const u8, ids: StoredChannel) !void {
     mutex.lock();
     defer mutex.unlock();
     try channelCache.put(name, ids);
-    std.debug.print("PUT {s} = {any}\n", .{ name, ids });
 }
 
 fn getOrCreateChannel(settings: Discord.CreateGuildChannel) !StoredChannel {
     while (!cacheInit) {}
     mutex.lock();
+    defer mutex.unlock();
     var ids = channelCache.get(settings.name) orelse StoredChannel{ .id = null, .parent = null };
-    std.debug.print("GET {s} = {any}\n", .{ settings.name, ids });
-    mutex.unlock();
 
-    if (ids.id == null and ids.parent == null and ids.parent == settings.parent_id) {
+    if (ids.id == null) {
         const res = try discordSession.api.createGuildChannel(Discord.Snowflake.from(guild_id), settings);
         const channel = res.value.unwrap();
         ids.id = channel.id;
         ids.parent = channel.parent_id;
-        try addChannel(settings.name, ids);
+        try channelCache.put(settings.name, ids);
     }
+
     return ids;
 }
 
@@ -78,10 +77,9 @@ fn initChannels(msg: Irc.Message) !void {
     channelCategory = parent.id.?;
 
     const channel = msg.content.channel.items;
-    std.debug.print("channel: {s}\n", .{channel});
 
     _ = try getOrCreateChannel(.{
-        .name = channel,
+        .name = try ircSession.allocator.dupe(u8, channel),
         .parent_id = parent.id,
     });
 }
@@ -95,15 +93,14 @@ fn initDM(msg: Irc.Message) !void {
     var users = std.mem.splitScalar(u8, msg.content.params.items[0].items, ' ');
     while (users.next()) |user| {
         _ = try getOrCreateChannel(.{
-            .name = user,
+            .name = try ircSession.allocator.dupe(u8, user),
             .parent_id = parent.id,
         });
-        std.debug.print("user: {s}\n", .{user});
     }
 }
 
 fn initIrc(allocator: std.mem.Allocator, envMap: *std.process.EnvMap) !void {
-    const host = getenv(envMap, "HOST", true).?;
+    const server = getenv(envMap, "SERVER", true).?;
     const port = utils.toInt(u16, getenv(envMap, "PORT", true).?) catch |err| {
         std.debug.print("Invalid port: {}\n", .{err});
         @panic("PORT environment variable must be a valid u16");
@@ -116,17 +113,18 @@ fn initIrc(allocator: std.mem.Allocator, envMap: *std.process.EnvMap) !void {
     const nickname = getenv(envMap, "NICKNAME", true).?;
     const username = getenv(envMap, "USERNAME", false);
     const realname = getenv(envMap, "REALNAME", false);
-    const password = getenv(envMap, "PASWORD", false);
+    const password = getenv(envMap, "PASSWORD", false);
+    const channels = getenv(envMap, "CHANNELS", true).?;
 
     try ircSession.start(.{
-        .host = host,
+        .server = server,
         .port = port,
         .user = .{
             .nickname = nickname,
             .username = username,
             .realname = realname,
             .password = password,
-            .channels = &[_][]const u8{ "#test1", "#test2" },
+            .channels = channels,
         },
         .actions = .{
             .on_message = ircMessage,
@@ -146,7 +144,7 @@ fn initChannelsCache(_: *Discord.Shard, _: Discord.Ready) !void {
 }
 
 fn deleteChannel(_: *Discord.Shard, channel: Discord.Channel) !void {
-    while (mutex.tryLock()) {}
+    mutex.lock();
     defer mutex.unlock();
 
     _ = channelCache.remove(channel.name.?);

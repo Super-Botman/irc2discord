@@ -90,7 +90,7 @@ const User = struct {
     username: ?[]const u8 = null,
     realname: ?[]const u8 = null,
     password: ?[]const u8 = null,
-    channels: []const []const u8,
+    channels: []const u8,
 };
 
 const Actions = struct {
@@ -101,7 +101,7 @@ const Actions = struct {
 };
 
 const Settings = struct {
-    host: []const u8,
+    server: []const u8,
     port: u16,
     user: User,
     actions: Actions,
@@ -278,7 +278,8 @@ pub const Session = struct {
         try writer.print("NICK {s}\r\n", .{user.nickname});
         try writer.print("USER {s} 0 * {s}\r\n", .{ user.username orelse user.nickname, user.realname orelse user.nickname });
 
-        for (user.channels) |channel| {
+        var channels = std.mem.splitScalar(u8, user.channels, ' ');
+        while (channels.next()) |channel| {
             try writer.print("JOIN {s}\r\n", .{channel});
         }
     }
@@ -298,8 +299,8 @@ pub const Session = struct {
     }
 
     pub fn start(self: *Self, settings: Settings) !void {
-        const tcp = std.net.tcpConnectToHost(self.allocator, settings.host, settings.port) catch {
-            std.debug.print("Error: cannot connect to server\n", .{});
+        const tcp = std.net.tcpConnectToHost(self.allocator, settings.server, settings.port) catch {
+            std.debug.print("Error: cannot connect to {s}:{d}\n", .{ settings.server, settings.port });
             return;
         };
         defer tcp.close();
@@ -307,10 +308,10 @@ pub const Session = struct {
         var root_ca = try tls.config.cert.fromSystem(self.allocator);
         defer root_ca.deinit(self.allocator);
 
-        std.debug.print("info(irc): Connected to {s}:{d}\n", .{ settings.host, settings.port });
+        std.debug.print("info(irc): Connected to {s}:{d}\n", .{ settings.server, settings.port });
 
         var connection = try tls.client(tcp, .{
-            .host = settings.host,
+            .host = settings.server,
             .root_ca = root_ca,
             .insecure_skip_verify = true,
         });
