@@ -164,6 +164,10 @@ fn parse(allocator: std.mem.Allocator, buffer: []const u8) !std.ArrayList(Messag
         var paramIndex: usize = 0;
         var isCommand = false;
         while (message_parts.next()) |part| : (i += 1) {
+            if (part.len <= 0) {
+                continue;
+            }
+
             switch (i) {
                 0 => {
                     if (part[0] == ':') {
@@ -238,7 +242,7 @@ pub const Session = struct {
         const writer = self.connection.writer();
         switch (command) {
             Commands.PING => {
-                try writer.print("PONG {d}", .{std.time.timestamp()});
+                try writer.print("PONG {d}\r\n", .{std.time.timestamp()});
             },
             Commands.PRIVMSG => {
                 try parseChannel(&self.message, self.message.content.params.items[0].items);
