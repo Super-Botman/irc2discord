@@ -52,6 +52,10 @@
             .url = "git+https://github.com/g41797/mailbox.git#42bd0b66882dff411f0f9bc1f8df374b3b2d3d28",
             .hash = "mailbox-0.0.0-eJsHsNk2AAB71_iN5z6lpS9v1UwzZCn9dqhx4wBhHCSD",
         },
+        .dotenv = .{
+            .url = "git+https://github.com/dying-will-bullet/dotenv.git#091402db3829056cc5d32d7fe88c7778de09c2ae",
+            .hash = "dotenv-0.2.1-AAAAADB4AACfBkkMBV8ey_5UYYF5zeLKMa7OJhc-0mdu",
+        },
     },
 
     .paths = .{

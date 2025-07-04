@@ -1,14 +1,14 @@
 const std = @import("std");
-const cache = @import("cache");
+const dotenv = @import("dotenv");
 const utils = @import("utils.zig");
 const Irc = @import("irc.zig");
 const Discord = @import("discord.zig");
 
+var mutex = std.Thread.Mutex{};
 var discordSession: *Discord.Session = undefined;
 var ircSession: *Irc.Session = undefined;
 var guild_id: u64 = undefined;
 
-var mutex = std.Thread.Mutex{};
 var channelCache: std.StringHashMap(StoredChannel) = undefined;
 var cacheInit = false;
 
@@ -72,6 +72,9 @@ fn ircMessage(msg: Irc.Message) !void {
         channel = try getOrCreateChannel(.{ .name = std.ascii.lowerString(&buf, sanitized_user) });
     }
 
+    mutex.lock();
+    defer mutex.unlock();
+
     _ = try discordSession.api.sendMessage(channel.id.?, .{ .content = message });
 }
 
@@ -105,9 +108,11 @@ fn initDM(msg: Irc.Message) !void {
     }
 }
 
-fn initIrc(allocator: std.mem.Allocator, envMap: *std.process.EnvMap) !void {
-    const server = getenv(envMap, "SERVER", true).?;
-    const port = utils.toInt(u16, getenv(envMap, "PORT", true).?) catch |err| {
+fn initIrc(allocator: std.mem.Allocator) !void {
+    try dotenv.load(allocator, .{});
+
+    const server = std.posix.getenv("SERVER").?;
+    const port = utils.toInt(u16, std.posix.getenv("PORT").?) catch |err| {
         std.debug.print("Invalid port: {}\n", .{err});
         @panic("PORT environment variable must be a valid u16");
     };
@@ -116,11 +121,11 @@ fn initIrc(allocator: std.mem.Allocator, envMap: *std.process.EnvMap) !void {
     ircSession.* = Irc.init(allocator);
     defer allocator.destroy(ircSession);
 
-    const nickname = getenv(envMap, "NICKNAME", true).?;
-    const username = getenv(envMap, "USERNAME", false);
-    const realname = getenv(envMap, "REALNAME", false);
-    const password = getenv(envMap, "PASSWORD", false);
-    const channels = getenv(envMap, "CHANNELS", true).?;
+    const nickname = std.posix.getenv("NICKNAME").?;
+    const username = std.posix.getenv("USERNAME");
+    const realname = std.posix.getenv("REALNAME");
+    const password = std.posix.getenv("PASSWORD");
+    const channels = std.posix.getenv("CHANNELS").?;
 
     try ircSession.start(.{
         .server = server,
@@ -169,6 +174,9 @@ fn discordMessage(_: *Discord.Shard, message: Discord.Message) !void {
         };
         const category = fetched.value.unwrap();
 
+        mutex.lock();
+        defer mutex.unlock();
+
         if (std.mem.eql(u8, category.name.?, "Channels")) {
             try ircSession.sendMessage("PRIVMSG #{s} :{s}\r\n", .{ channel.name.?, message.content.? });
         } else {
@@ -177,13 +185,15 @@ fn discordMessage(_: *Discord.Shard, message: Discord.Message) !void {
     }
 }
 
-fn initDiscord(allocator: std.mem.Allocator, envMap: *std.process.EnvMap) !void {
-    guild_id = utils.toInt(u64, getenv(envMap, "GUILD_ID", true).?) catch |err| {
+fn initDiscord(allocator: std.mem.Allocator) !void {
+    try dotenv.load(allocator, .{});
+
+    guild_id = utils.toInt(u64, std.posix.getenv("GUILD_ID").?) catch |err| {
         std.debug.print("Invalid guild id: {}\n", .{err});
         @panic("GUILD_ID environment variable must be a valid u64");
     };
 
-    const token = getenv(envMap, "DISCORD_TOKEN", true).?;
+    const token = std.posix.getenv("DISCORD_TOKEN").?;
 
     discordSession = try allocator.create(Discord.Session);
     discordSession.* = Discord.init(allocator);
@@ -222,18 +232,13 @@ pub fn main() !void {
     };
     const allocator = thread_safe_arena.allocator();
 
-    const envMap = try allocator.create(std.process.EnvMap);
-    envMap.* = try std.process.getEnvMap(allocator);
-    defer allocator.destroy(envMap);
-    defer envMap.deinit();
-
     mutex.lock();
     channelCache = std.StringHashMap(StoredChannel).init(allocator);
     defer channelCache.deinit();
     mutex.unlock();
 
-    const DiscordThread = try std.Thread.spawn(.{}, initDiscord, .{ allocator, envMap });
-    const IrcThread = try std.Thread.spawn(.{}, initIrc, .{ allocator, envMap });
+    const DiscordThread = try std.Thread.spawn(.{}, initDiscord, .{allocator});
+    const IrcThread = try std.Thread.spawn(.{}, initIrc, .{allocator});
     IrcThread.join();
     DiscordThread.join();
 }

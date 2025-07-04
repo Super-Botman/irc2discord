@@ -34,11 +34,8 @@ pub fn build(b: *std.Build) void {
     const dzig = b.dependency("discordzig", .{});
     exe.root_module.addImport("discord.zig", dzig.module("discord.zig"));
 
-    const cache = b.dependency("cache", .{});
-    exe.root_module.addImport("cache", cache.module("cache"));
-
-    const mailbox = b.dependency("mailbox", .{});
-    exe.root_module.addImport("mailbox", mailbox.module("mailbox"));
+    const dotenv = b.dependency("dotenv", .{});
+    exe.root_module.addImport("dotenv", dotenv.module("dotenv"));
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default

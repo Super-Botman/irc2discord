@@ -11,6 +11,20 @@ const Commands = enum {
 const Replies = enum(u16) {
     WHO = 352,
     NAME = 353,
+    RPL_TOPIC = 332,
+
+    ERR = 400,
+    ERR_ALREADYREGISTRED = 462,
+    ERR_NEEDMOREPARAMS = 461,
+    ERR_BANNEDFROMCHAN = 474,
+    ERR_INVITEONLYCHAN = 473,
+    ERR_BADCHANNELKEY = 475,
+    ERR_CHANNELISFULL = 471,
+    ERR_BADCHANMASK = 476,
+    ERR_NOSUCHCHANNEL = 403,
+    ERR_TOOMANYCHANNELS = 405,
+    ERR_TOOMANYTARGETS = 407,
+    ERR_UNAVAILRESOURCE = 437,
 };
 
 pub const ChannelType = enum {
@@ -212,6 +226,7 @@ fn parseChannel(message: *Message, channel_buf: []const u8) !void {
 
 pub const Session = struct {
     const Self = @This();
+    var mutex = std.Thread.Mutex{};
 
     allocator: std.mem.Allocator,
     connection: tls.Connection(std.net.Stream),
@@ -254,6 +269,9 @@ pub const Session = struct {
                 try callAction(self.settings.actions.on_who, self.message);
                 return;
             },
+            else => {
+                return;
+            },
         }
     }
 
@@ -282,9 +300,43 @@ pub const Session = struct {
         while (channels.next()) |channel| {
             try writer.print("JOIN {s}\r\n", .{channel});
         }
+
+        while (try self.connection.next()) |buffer| {
+            const messages = try parse(self.allocator, buffer);
+            for (messages.items) |message| {
+                if (std.enums.fromInt(Replies, utils.toInt(u16, message.content.command.items) catch 0)) |reply| {
+                    switch (reply) {
+                        Replies.ERR_NEEDMOREPARAMS,
+                        Replies.ERR_ALREADYREGISTRED,
+                        Replies.ERR,
+                        => @panic("Login failed"),
+
+                        else => {},
+                    }
+
+                    switch (reply) {
+                        Replies.ERR_NEEDMOREPARAMS,
+                        Replies.ERR_INVITEONLYCHAN,
+                        Replies.ERR_CHANNELISFULL,
+                        Replies.ERR_BANNEDFROMCHAN,
+                        Replies.ERR_BADCHANNELKEY,
+                        Replies.ERR_BADCHANMASK,
+                        Replies.ERR,
+                        => @panic("Join failed"),
+
+                        Replies.RPL_TOPIC => return,
+
+                        else => {},
+                    }
+                }
+                message.deinit();
+            }
+        }
     }
 
     pub fn sendMessage(self: *Self, comptime fmt: []const u8, args: anytype) !void {
+        mutex.lock();
+        defer mutex.unlock();
         const writer = self.connection.writer();
         try writer.print(fmt, args);
     }
@@ -324,7 +376,7 @@ pub const Session = struct {
 
         std.debug.print("info(irc): Logged in as {s}\n", .{settings.user.nickname});
 
-        while (try connection.next()) |buffer| {
+        while (try self.connection.next()) |buffer| {
             const messages = try parse(self.allocator, buffer);
             for (messages.items) |message| {
                 self.message = message;
