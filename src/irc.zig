@@ -187,7 +187,7 @@ fn parse(allocator: std.mem.Allocator, buffer: []const u8) !std.ArrayList(Messag
                     }
                 },
                 else => {
-                    if (part[0] == ':') {
+                    if (part[0] == ':' and paramIndex == 0) {
                         var param = std.ArrayList(u8).init(allocator);
                         try param.appendSlice(part[1..part.len]);
                         try msg.content.params.append(param);
@@ -339,8 +339,6 @@ pub const Session = struct {
     }
 
     pub fn sendMessage(self: *Self, comptime fmt: []const u8, args: anytype) !void {
-        mutex.lock();
-        defer mutex.unlock();
         const writer = self.connection.writer();
         try writer.print(fmt, args);
     }
