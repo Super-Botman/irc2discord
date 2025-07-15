@@ -4,7 +4,11 @@ const utils = @import("utils.zig");
 const Irc = @import("irc.zig");
 const Discord = @import("discord.zig");
 
+const CHANNELS_CATEGORY = "Channels";
+const USERS_CATEGORY = "Users";
+
 var mutex = std.Thread.Mutex{};
+var cache_ready = std.Thread.Condition{};
 var discordSession: *Discord.Session = undefined;
 var ircSession: *Irc.Session = undefined;
 var guild_id: u64 = undefined;
@@ -40,9 +44,12 @@ fn addChannel(name: []const u8, ids: StoredChannel) !void {
 }
 
 fn getOrCreateChannel(settings: Discord.CreateGuildChannel) !StoredChannel {
-    while (!cacheInit) {}
     mutex.lock();
     defer mutex.unlock();
+
+    while (!cacheInit) {
+        cache_ready.wait(&mutex);
+    }
     var ids = channelCache.get(settings.name) orelse StoredChannel{ .id = null, .parent = null };
 
     if (ids.id == null) {
@@ -80,7 +87,7 @@ fn ircMessage(msg: Irc.Message) !void {
 
 fn initChannels(msg: Irc.Message) !void {
     const parent = try getOrCreateChannel(.{
-        .name = "Channels",
+        .name = CHANNELS_CATEGORY,
         .type = Discord.ChannelTypes.GuildCategory,
     });
 
@@ -94,7 +101,7 @@ fn initChannels(msg: Irc.Message) !void {
 
 fn initDM(msg: Irc.Message) !void {
     const parent = try getOrCreateChannel(.{
-        .name = "Users",
+        .name = USERS_CATEGORY,
         .type = Discord.ChannelTypes.GuildCategory,
     });
 
@@ -112,14 +119,14 @@ fn initIrc(allocator: std.mem.Allocator) !void {
     try dotenv.load(allocator, .{});
 
     const server = std.posix.getenv("SERVER").?;
-    const port = utils.toInt(u16, std.posix.getenv("PORT").?) catch |err| {
+    const port = utils.parseInt(u16, std.posix.getenv("PORT").?) catch |err| {
         std.debug.print("Invalid port: {}\n", .{err});
         @panic("PORT environment variable must be a valid u16");
     };
 
     ircSession = try allocator.create(Irc.Session);
     ircSession.* = Irc.init(allocator);
-    defer allocator.destroy(ircSession);
+    errdefer allocator.destroy(ircSession);
 
     const nickname = std.posix.getenv("NICKNAME").?;
     const username = std.posix.getenv("USERNAME");
@@ -151,7 +158,11 @@ fn initChannelsCache(_: *Discord.Shard, _: Discord.Ready) !void {
     for (channels.value.right) |channel| {
         try addChannel(channel.name.?, .{ .id = channel.id, .parent = channel.parent_id });
     }
+
+    mutex.lock();
+    defer mutex.unlock();
     cacheInit = true;
+    cache_ready.broadcast();
 }
 
 fn deleteChannel(_: *Discord.Shard, channel: Discord.Channel) !void {
@@ -177,7 +188,7 @@ fn discordMessage(_: *Discord.Shard, message: Discord.Message) !void {
         mutex.lock();
         defer mutex.unlock();
 
-        if (std.mem.eql(u8, category.name.?, "Channels")) {
+        if (std.mem.eql(u8, category.name.?, CHANNELS_CATEGORY)) {
             try ircSession.sendMessage("PRIVMSG #{s} :{s}\r\n", .{ channel.name.?, message.content.? });
         } else {
             try ircSession.sendMessage("PRIVMSG {s} :{s}\r\n", .{ channel.name.?, message.content.? });
@@ -188,7 +199,7 @@ fn discordMessage(_: *Discord.Shard, message: Discord.Message) !void {
 fn initDiscord(allocator: std.mem.Allocator) !void {
     try dotenv.load(allocator, .{});
 
-    guild_id = utils.toInt(u64, std.posix.getenv("GUILD_ID").?) catch |err| {
+    guild_id = utils.parseInt(u64, std.posix.getenv("GUILD_ID").?) catch |err| {
         std.debug.print("Invalid guild id: {}\n", .{err});
         @panic("GUILD_ID environment variable must be a valid u64");
     };
@@ -197,10 +208,8 @@ fn initDiscord(allocator: std.mem.Allocator) !void {
 
     discordSession = try allocator.create(Discord.Session);
     discordSession.* = Discord.init(allocator);
-    defer {
-        allocator.destroy(discordSession);
-        discordSession.deinit();
-    }
+    errdefer allocator.destroy(discordSession);
+    defer discordSession.deinit();
 
     const intents = Discord.Intents{
         .Guilds = true,

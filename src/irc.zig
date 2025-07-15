@@ -238,7 +238,7 @@ pub const Session = struct {
     message: Message,
 
     fn handleCommand(self: *Self, command: Commands) !void {
-        std.debug.print("info(irc): new command {s}\n", .{std.enums.tagName(Commands, command).?});
+        std.debug.print("info(irc): new command {s}\n", .{@tagName(command)});
         const writer = self.connection.writer();
         switch (command) {
             Commands.PING => {
@@ -255,7 +255,7 @@ pub const Session = struct {
         }
     }
     fn handleReply(self: *Self, reply: Replies) !void {
-        std.debug.print("info(irc): new reply {s}\n", .{std.enums.tagName(Replies, reply).?});
+        std.debug.print("info(irc): new reply {s}\n", .{@tagName(reply)});
         switch (reply) {
             Replies.NAME => {
                 self.message.content.channel_type = ChannelType.USER;
@@ -280,13 +280,11 @@ pub const Session = struct {
     }
 
     fn handleMessage(self: *Self) !void {
-        const replyCode = utils.toInt(u16, self.message.content.command.items) catch 0;
+        const replyCode = utils.parseInt(u16, self.message.content.command.items) catch 0;
         if (std.enums.fromInt(Replies, replyCode)) |reply| {
             try self.handleReply(reply);
         } else if (std.meta.stringToEnum(Commands, self.message.content.command.items)) |command| {
             try self.handleCommand(command);
-        } else {
-            return;
         }
     }
 
@@ -308,7 +306,8 @@ pub const Session = struct {
         while (try self.connection.next()) |buffer| {
             const messages = try parse(self.allocator, buffer);
             for (messages.items) |message| {
-                if (std.enums.fromInt(Replies, utils.toInt(u16, message.content.command.items) catch 0)) |reply| {
+                const replyCode = utils.parseInt(u16, message.content.command.items) catch 0;
+                if (std.enums.fromInt(Replies, replyCode)) |reply| {
                     switch (reply) {
                         Replies.ERR_NEEDMOREPARAMS,
                         Replies.ERR_ALREADYREGISTRED,
@@ -372,8 +371,9 @@ pub const Session = struct {
         self.connection = connection;
         self.settings = settings;
 
-        self.login() catch {
-            @panic("Login failed");
+        self.login() catch |err| {
+            std.debug.print("Login failed: {}\n", .{err});
+            return err;
         };
 
         std.debug.print("info(irc): Logged in as {s}\n", .{settings.user.nickname});
