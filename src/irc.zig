@@ -280,7 +280,7 @@ pub const Session = struct {
     }
 
     fn handleMessage(self: *Self) !void {
-        const replyCode = utils.parseInt(u16, self.message.content.command.items) catch 0;
+        const replyCode = std.fmt.parseInt(u16, self.message.content.command.items, 10) catch 0;
         if (std.enums.fromInt(Replies, replyCode)) |reply| {
             try self.handleReply(reply);
         } else if (std.meta.stringToEnum(Commands, self.message.content.command.items)) |command| {
@@ -306,7 +306,7 @@ pub const Session = struct {
         while (try self.connection.next()) |buffer| {
             const messages = try parse(self.allocator, buffer);
             for (messages.items) |message| {
-                const replyCode = utils.parseInt(u16, message.content.command.items) catch 0;
+                const replyCode = std.fmt.parseInt(u16, message.content.command.items, 10) catch 0;
                 if (std.enums.fromInt(Replies, replyCode)) |reply| {
                     switch (reply) {
                         Replies.ERR_NEEDMOREPARAMS,
