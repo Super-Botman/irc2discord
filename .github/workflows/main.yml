@@ -19,7 +19,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Build and Test
-        run: sh ci/build.sh
+        run: ci/build.sh
       - name: Release bins
         uses: ncipollo/release-action@v1
         with:
