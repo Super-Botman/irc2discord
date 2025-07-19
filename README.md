@@ -8,19 +8,14 @@
 example .env
 ```env
 NICKNAME=botman
-USERNAME=botman
-REALNAME=botman
-PASSWORD=pasword
+USERNAME=0xb0tm4n
+REALNAME=John Doe
+PASSWORD=mysuperpassword
 
-IRC_CHANNEL=#test
-DISCORD_CHANNEL=<channel_id>
-
+CHANNELS='#test'
 SERVER=irc.libera.chat
 PORT=6697
 
-DISCORD_TOKEN=<discord_token>
+GUILD_ID=<guild id>
+DISCORD_TOKEN=<token>
 ```
-
-TO KNOW:
-- username
-- channel
