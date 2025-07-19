@@ -10,7 +10,7 @@ echo "Installing Zig"
 
 wget "https://ziglang.org/builds/zig-x86_64-linux-$ZIG_VERSION.tar.xz"
 tar xf "zig-x86_64-linux-$ZIG_VERSION.tar.xz"
-export PATH="$HOME/zig-x86_64-linux-0.13.0:$PATH"
+export PATH="$HOME/zig-x86_64-linux-$ZIG_VERSION:$PATH"
 
 echo "Checking Zig installation"
 zig version
