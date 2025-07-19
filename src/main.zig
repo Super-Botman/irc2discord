@@ -116,7 +116,7 @@ fn initDM(msg: Irc.Message) !void {
 }
 
 fn initIrc(allocator: std.mem.Allocator) !void {
-    try dotenv.load(allocator, .{});
+    //try dotenv.load(allocator, .{});
 
     const server = std.posix.getenv("SERVER").?;
     const port = std.fmt.parseInt(u16, std.posix.getenv("PORT").?, 10) catch |err| {
@@ -197,7 +197,7 @@ fn discordMessage(_: *Discord.Shard, message: Discord.Message) !void {
 }
 
 fn initDiscord(allocator: std.mem.Allocator) !void {
-    try dotenv.load(allocator, .{});
+    //try dotenv.load(allocator, .{});
 
     guild_id = std.fmt.parseInt(u64, std.posix.getenv("GUILD_ID").?, 10) catch |err| {
         std.debug.print("Invalid guild id: {}\n", .{err});

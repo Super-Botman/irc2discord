@@ -44,10 +44,6 @@
             .url = "git+https://github.com/karlseguin/cache.zig.git#87e811190e158ac1196a4c8aeb0070e5f59b10c4",
             .hash = "cache-0.0.0-winRwBp9AAB2k01WUUsA8AqkMxD0R5ixoNtS6dQSZJhQ",
         },
-        .discordzig = .{
-            .url = "git+https://git.yuzucchii.xyz/yuzucchii/discord.zig.git#8115761b56afdde76293464fd5edd657d3a158f1",
-            .hash = "discordzig-1.0.0-KYtlU8JgCAAJYieLVcnvqIIP9HtLNT5TEfvIrJa7hLmf",
-        },
         .mailbox = .{
             .url = "git+https://github.com/g41797/mailbox.git#42bd0b66882dff411f0f9bc1f8df374b3b2d3d28",
             .hash = "mailbox-0.0.0-eJsHsNk2AAB71_iN5z6lpS9v1UwzZCn9dqhx4wBhHCSD",
@@ -55,6 +51,10 @@
         .dotenv = .{
             .url = "git+https://github.com/dying-will-bullet/dotenv.git#57b1871f2cafcc3cdf8e57ffb23b4b00184bde28",
             .hash = "dotenv-0.2.1-ikMfwFx4AABpCuWUPUnG7LZN7DwFXOIiZyvveGdave-L",
+        },
+        .discordzig = .{
+            .url = "git+https://git.yuzucchii.xyz/yuzucchii/discord.zig.git#c80dd098907ea4df90f3fdbc47f2c4ed5ff2bb2e",
+            .hash = "discordzig-1.0.0-KYtlU3NiCAAa_0dulzAyEuWb578rbM4IkuCGMdvaRF_8",
         },
     },
 
