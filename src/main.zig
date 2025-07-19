@@ -26,17 +26,6 @@ const StoredChannel = struct {
     parent: ?Discord.Snowflake = null,
 };
 
-fn getenv(envMap: *std.process.EnvMap, name: []const u8, necessary: bool) ?[]const u8 {
-    return envMap.get(name) orelse {
-        if (necessary) {
-            std.debug.print("{s} var not found\n", .{name});
-            @panic("exiting");
-        } else {
-            return null;
-        }
-    };
-}
-
 fn addChannel(name: []const u8, ids: StoredChannel) !void {
     mutex.lock();
     defer mutex.unlock();
@@ -116,10 +105,10 @@ fn initDM(msg: Irc.Message) !void {
 }
 
 fn initIrc(allocator: std.mem.Allocator) !void {
-    //try dotenv.load(allocator, .{});
+    try dotenv.load(allocator, .{});
 
-    const server = std.posix.getenv("SERVER").?;
-    const port = std.fmt.parseInt(u16, std.posix.getenv("PORT").?, 10) catch |err| {
+    const server = try std.process.getEnvVarOwned(allocator, "SERVER");
+    const port = std.fmt.parseInt(u16, try std.process.getEnvVarOwned(allocator, "PORT"), 10) catch |err| {
         std.debug.print("Invalid port: {}\n", .{err});
         @panic("PORT environment variable must be a valid u16");
     };
@@ -128,11 +117,11 @@ fn initIrc(allocator: std.mem.Allocator) !void {
     ircSession.* = Irc.init(allocator);
     errdefer allocator.destroy(ircSession);
 
-    const nickname = std.posix.getenv("NICKNAME").?;
-    const username = std.posix.getenv("USERNAME");
-    const realname = std.posix.getenv("REALNAME");
-    const password = std.posix.getenv("PASSWORD");
-    const channels = std.posix.getenv("CHANNELS").?;
+    const nickname = try std.process.getEnvVarOwned(allocator, "NICKNAME");
+    const username = std.process.getEnvVarOwned(allocator, "USERNAME") catch null;
+    const realname = std.process.getEnvVarOwned(allocator, "REALNAME") catch null;
+    const password = std.process.getEnvVarOwned(allocator, "PASSWORD") catch null;
+    const channels = try std.process.getEnvVarOwned(allocator, "CHANNELS");
 
     try ircSession.start(.{
         .server = server,
@@ -197,14 +186,14 @@ fn discordMessage(_: *Discord.Shard, message: Discord.Message) !void {
 }
 
 fn initDiscord(allocator: std.mem.Allocator) !void {
-    //try dotenv.load(allocator, .{});
+    try dotenv.load(allocator, .{});
 
-    guild_id = std.fmt.parseInt(u64, std.posix.getenv("GUILD_ID").?, 10) catch |err| {
+    guild_id = std.fmt.parseInt(u64, try std.process.getEnvVarOwned(allocator, "GUILD_ID"), 10) catch |err| {
         std.debug.print("Invalid guild id: {}\n", .{err});
         @panic("GUILD_ID environment variable must be a valid u64");
     };
 
-    const token = std.posix.getenv("DISCORD_TOKEN").?;
+    const token = try std.process.getEnvVarOwned(allocator, "DISCORD_TOKEN");
 
     discordSession = try allocator.create(Discord.Session);
     discordSession.* = Discord.init(allocator);
