@@ -2,7 +2,7 @@
 
 > [!WARNING]  
 > This project is still a POC and many problems could occur ! 
-> You must use the last version of zig (0.15)
+> You must use this version of zig: 0.15.0-dev.769+4d7980645 bcause zig devs decided to changes somethings that break the build ¯\_(ツ)_/¯
 
 
 example .env

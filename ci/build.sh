@@ -4,11 +4,11 @@ set -e
 
 PROJECT_NAME="irc2discord"
 BUILD_DIR="release"
-ZIG_VERSION="0.15.0-dev.1092+d772c0627"
+ZIG_VERSION="0.14.1"
 
 echo "Installing Zig"
 
-wget "https://ziglang.org/builds/zig-x86_64-linux-$ZIG_VERSION.tar.xz"
+wget "https://ziglang.org/download/$ZIG_VERSION/zig-x86_64-linux-$ZIG_VERSION.tar.xz"
 tar xf "zig-x86_64-linux-$ZIG_VERSION.tar.xz"
 export PATH="$(pwd)/zig-x86_64-linux-$ZIG_VERSION:$PATH"
 
@@ -39,7 +39,7 @@ for platform in "${!TARGETS[@]}"; do
     fi
     
     # Build with zig, continue on failure
-    if zig build -Dtarget="$target" -Doptimize=ReleaseFast 2>/dev/null; then
+    if zig build -Dtarget="$target" -Doptimize=ReleaseFast; then
         # Copy binary to releases directory with platform-specific name
         if [[ $platform == *"windows"* ]]; then
             cp "zig-out/bin/${PROJECT_NAME}.exe" "$BUILD_DIR/$binary_name" 2>/dev/null || echo "⚠ Failed to copy $binary_name"
