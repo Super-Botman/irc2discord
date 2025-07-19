@@ -1,0 +1,26 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+concurrency:
+  # Cancels pending runs when a PR gets updated.
+  group: ${{ github.head_ref || github.run_id }}-${{ github.actor }}
+  cancel-in-progress: true
+permissions:
+  # Sets permission policy for `GITHUB_TOKEN`
+  contents: read
+jobs:
+  x86_64-linux-debug:
+    timeout-minutes: 540
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build and Test
+        run: sh ci/build.sh
+      - name: Release bins
+        uses: ncipollo/release-action@v1
+        with:
+            artifacts: "release/*"
