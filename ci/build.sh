@@ -4,6 +4,16 @@ set -e
 
 PROJECT_NAME="irc2discord"
 BUILD_DIR="release"
+ZIG_VERSION="0.15.0-dev.1092+d772c0627"
+
+echo "Installing Zig"
+
+wget "https://ziglang.org/download/$ZIG_VERSION/zig-linux-x86_64-$ZIG_VERSION.tar.xz"
+tar xf "zig-linux-x86_64-$ZIG_VERSION.tar.xz"
+export PATH="$HOME/zig-linux-x86_64-0.13.0:$PATH"
+
+echo "Checking Zig installation"
+zig version
 
 echo "Building $PROJECT_NAME"
 
